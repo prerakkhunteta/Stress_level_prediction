@@ -4,3 +4,4 @@ setuptools>=65.5.0
 wheel
 meson
 ninja
+sklearn
