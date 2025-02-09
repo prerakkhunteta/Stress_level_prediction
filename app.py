@@ -38,52 +38,12 @@ st.markdown("""
     Enter your information below to get a prediction.
 """)
 
-# Load and cache data
-@st.cache_data
-def load_data():
-    df = pd.read_csv('anxiety_attack_dataset.csv')
-    return df
-
-# Load and prepare the model
-@st.cache_resource
-def prepare_model(df, feature_cols):
-    X = df[feature_cols]
-    y = df['Stress Level (1-10)']
-    
-    # Split the data
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    
-    # Scale the features
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    
-    # Train the model with more trees and better parameters
-    model = RandomForestRegressor(
-        n_estimators=200,
-        max_depth=10,
-        min_samples_split=5,
-        min_samples_leaf=2,
-        random_state=42
-    )
-    model.fit(X_train_scaled, y_train)
-    
-    return model, scaler
-
-# Load the data silently
+# Load data
 try:
-    df = load_data()
+    df = pd.read_csv('anxiety_attack_dataset.csv')
 except Exception as e:
     st.error("Error loading the dataset. Please make sure the data file is present.")
     st.stop()
-
-# Define feature columns
-feature_cols = ['Age', 'Sleep Hours', 'Physical Activity (hrs/week)', 
-               'Caffeine Intake (mg/day)', 'Alcohol Consumption (drinks/week)',
-               'Heart Rate (bpm during attack)', 'Breathing Rate (breaths/min)',
-               'Sweating Level (1-5)', 'Diet Quality (1-10)']
-
-# Prepare the model
-model, scaler = prepare_model(df, feature_cols)
 
 # Create three columns for input
 st.subheader("📝 Enter Your Information")
@@ -118,6 +78,14 @@ with col3:
 # Prediction button
 if st.button("Predict Stress Level"):
     with st.spinner("Analyzing your data..."):
+        # Prepare the features
+        feature_cols = [
+            'Age', 'Sleep Hours', 'Physical Activity (hrs/week)',
+            'Caffeine Intake (mg/day)', 'Alcohol Consumption (drinks/week)',
+            'Heart Rate (bpm during attack)', 'Breathing Rate (breaths/min)',
+            'Sweating Level (1-5)', 'Diet Quality (1-10)'
+        ]
+        
         # Prepare input data
         input_data = pd.DataFrame({
             'Age': [age],
@@ -131,70 +99,121 @@ if st.button("Predict Stress Level"):
             'Diet Quality (1-10)': [diet_quality]
         })
         
-        # Scale the input
+        # Prepare training data
+        X = df[feature_cols]
+        y = df['Stress Level (1-10)']
+        
+        # Scale the features
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
         input_scaled = scaler.transform(input_data)
+        
+        # Train the model
+        model = RandomForestRegressor(
+            n_estimators=100,
+            max_depth=None,
+            min_samples_split=2,
+            min_samples_leaf=1,
+            random_state=42
+        )
+        model.fit(X_scaled, y)
         
         # Make prediction
         prediction = model.predict(input_scaled)[0]
+        prediction = round(prediction * 2) / 2  # Round to nearest 0.5
+        prediction = max(1, min(10, prediction))  # Ensure prediction is within bounds
         
-        # Round to nearest 0.5
-        prediction = round(prediction * 2) / 2
+        # Calculate feature importance scores
+        importances = model.feature_importances_
+        feature_imp = pd.DataFrame({
+            'Feature': feature_cols,
+            'Value': [input_data[col].iloc[0] for col in feature_cols],
+            'Importance': importances
+        }).sort_values('Importance', ascending=False)
         
-        # Ensure prediction is within bounds
-        prediction = max(1, min(10, prediction))
+        # Generate dynamic recommendations based on feature importance and values
+        recommendations = []
         
-        # Define stress level categories and recommendations
+        # Add recommendations based on most important features
+        for _, row in feature_imp.head(3).iterrows():
+            feature = row['Feature']
+            value = row['Value']
+            
+            if feature == 'Sleep Hours':
+                if value < 6:
+                    recommendations.append(f"Increase your sleep duration (currently {value:.1f} hours) to at least 7-8 hours")
+                elif value > 9:
+                    recommendations.append(f"Consider reducing sleep duration (currently {value:.1f} hours) to 7-8 hours")
+            
+            elif feature == 'Heart Rate (bpm during attack)':
+                if value > 100:
+                    recommendations.append(f"Your heart rate ({value:.0f} bpm) is elevated. Practice deep breathing exercises")
+                elif value < 60:
+                    recommendations.append(f"Your heart rate ({value:.0f} bpm) is low. Consider gentle exercise")
+            
+            elif feature == 'Caffeine Intake (mg/day)':
+                if value > 400:
+                    recommendations.append(f"Reduce caffeine intake (currently {value:.0f} mg/day) to below 400mg")
+                elif value > 200:
+                    recommendations.append(f"Consider moderating caffeine consumption (currently {value:.0f} mg/day)")
+            
+            elif feature == 'Physical Activity (hrs/week)':
+                if value < 2:
+                    recommendations.append(f"Increase physical activity (currently {value:.1f} hrs/week) to at least 2-3 hours")
+                elif value > 15:
+                    recommendations.append(f"Consider balancing your high physical activity ({value:.1f} hrs/week)")
+        
+        # Add stress level specific recommendations
         if prediction <= 3:
             level_text, color = "Low", "#28a745"
-            recommendations = [
-                "Continue maintaining your healthy lifestyle",
-                "Practice regular relaxation techniques",
-                "Keep up with your current stress management strategies"
-            ]
+            recommendations.extend([
+                f"Your stress level ({prediction:.1f}) indicates good management",
+                "Continue your current wellness practices",
+                "Consider preventive stress management techniques"
+            ])
         elif prediction <= 6:
             level_text, color = "Moderate", "#ffc107"
-            recommendations = [
-                "Consider increasing physical activity",
-                "Practice deep breathing exercises",
-                "Maintain a regular sleep schedule",
-                "Consider reducing caffeine intake"
-            ]
+            recommendations.extend([
+                f"Your stress level ({prediction:.1f}) indicates room for improvement",
+                "Consider daily mindfulness or meditation practice",
+                "Evaluate and adjust your daily routine"
+            ])
         else:
             level_text, color = "High", "#dc3545"
-            recommendations = [
-                "Consider consulting a healthcare professional",
-                "Implement stress reduction techniques immediately",
-                "Review and adjust lifestyle factors",
-                "Ensure adequate rest and sleep",
-                "Consider reducing work/study load if possible"
-            ]
+            recommendations.extend([
+                f"Your stress level ({prediction:.1f}) requires attention",
+                "Consider professional stress management support",
+                "Implement immediate stress reduction strategies"
+            ])
         
-        # Display prediction and recommendations
+        # Display prediction
         st.markdown(f"""
             <div style='padding: 20px; border-radius: 10px; background-color: {color}; text-align: center; margin: 20px 0;'>
                 <h2 style='color: white; margin: 0;'>Predicted Stress Level: {prediction:.1f} ({level_text})</h2>
             </div>
         """, unsafe_allow_html=True)
-
-        # Display feature importance
+        
+        # Display feature importance with actual values
         st.subheader("Most Influential Factors:")
-        feature_importance = pd.DataFrame({
-            'Feature': feature_cols,
-            'Importance': model.feature_importances_
-        }).sort_values('Importance', ascending=False)
-
-        top_features = feature_importance.head(3)
-        for idx, row in top_features.iterrows():
-            st.markdown(f"- **{row['Feature']}**: {row['Importance']:.2%} influence on prediction")
+        for idx, row in feature_imp.head(3).iterrows():
+            st.markdown(f"- **{row['Feature']}** (Current value: {row['Value']:.1f})")
         
         # Display recommendations
-        st.subheader("📋 Recommendations:")
-        for rec in recommendations:
-            st.markdown(f"- {rec}")
-
-        # Display confidence note
-        st.markdown("""
+        st.subheader("📋 Personalized Recommendations:")
+        for i, rec in enumerate(recommendations, 1):
+            st.markdown(f"{i}. {rec}")
+        
+        # Display analysis summary
+        st.markdown(f"""
         ---
-        **Note**: This prediction is based on the patterns found in our dataset. 
-        For accurate medical advice, please consult with a healthcare professional.
+        **Analysis Summary**: 
+        Your stress level prediction of {prediction:.1f} is primarily influenced by your {feature_imp.iloc[0]['Feature'].lower()} 
+        (current value: {feature_imp.iloc[0]['Value']:.1f}). 
+        
+        **Key Factors Contributing to Your Stress Level:**
+        - {feature_imp.iloc[0]['Feature']}: {'High' if feature_imp.iloc[0]['Value'] > np.mean(df[feature_imp.iloc[0]['Feature']]) else 'Low'} relative to average
+        - {feature_imp.iloc[1]['Feature']}: {'High' if feature_imp.iloc[1]['Value'] > np.mean(df[feature_imp.iloc[1]['Feature']]) else 'Low'} relative to average
+        
+        **Note**: This is a data-driven prediction based on machine learning analysis.
+        For medical advice, please consult with a healthcare professional.
         """)
